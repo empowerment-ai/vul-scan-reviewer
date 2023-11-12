@@ -44,7 +44,9 @@ def prepare_vulnerability_data(vulnerabilities, severities):
 
 def get_remediations(llm, cves, dockerfile):
     remediation_instructions = """I want you to act as an expert on docker and how to remediate vulnerabilities. 
-        Given the following CVEs, I want you to suggest changes to the provided Dockerfile to remediate or fix the CVEs. 
+        Given the following CVEs, I want you to suggest changes to the provided Dockerfile to remediate or fix the CVEs.  
+        Look for any other recommendations to improve the security posture of the docker image.   
+        Use markdown to highlight any changes. 
         CVEs: {cves}
         DOCKERFILE:
            {dockerfile}
