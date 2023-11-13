@@ -13,111 +13,76 @@ load_dotenv()
 
 # Function to prepare data for analysis and table display
 
+def extract_data(data, selected_severities):
+    # Convert the 'vulnerabilities' section to a DataFrame
+    vulnerabilities_df = pd.DataFrame(data['vulnerabilities'])
 
-def prepare_vulnerability_data(vulnerabilities, severities):
-    filtered_vulnerabilities = [
-        vul for vul in vulnerabilities if vul['severity'] in severities]
+    # Filter for selected severities
+    vulnerabilities_df = vulnerabilities_df[vulnerabilities_df['severity'].isin(selected_severities)]
 
-    data_for_table = []
-    cves_to_analyze = set()  # Using a set to avoid duplicates
-    for vul in filtered_vulnerabilities:
-        cve = vul['identifiers'][0]['value'] if 'identifiers' in vul and vul['identifiers'] else 'N/A'
-        link = vul['links'][0]['url'] if 'links' in vul and vul['links'] else 'N/A'
-        solution = vul['solution'] if 'solution' in vul else 'No solution provided'
-        source = vul['location']['image'] if 'location' in vul and 'image' in vul['location'] else 'N/A'
-        severity = vul['severity'] if 'severity' in vul else 'N/A'
+    # Extract necessary fields and check for solutions
+    vulnerabilities_df['has_solution'] = vulnerabilities_df['solution'].apply(lambda x: x != 'No solution provided')
 
-        data_for_table.append({
-            "Source": source,
-            "Severity": severity,
-            "CVE": cve,
-            "Details Link": link,
-            "Solution": solution
-        })
+    # Count total vulnerabilities by severity
+    severity_counts = vulnerabilities_df['severity'].value_counts().to_dict()
 
-        if solution and solution != 'No solution provided':
-            cves_to_analyze.add(cve)  # Adding to a set ensures no duplicates
+    # Count fixable vulnerabilities by severity
+    fixable_counts = vulnerabilities_df[vulnerabilities_df['has_solution']]['severity'].value_counts().to_dict()
 
-    # Converting back to a list for further processing
-    return data_for_table, list(cves_to_analyze)
+    # Extract CVE and solution details for fixable vulnerabilities
+    fixable_vulns = vulnerabilities_df[vulnerabilities_df['has_solution']][['severity', 'identifiers', 'solution']]
 
+    # Constructing the result string
+    result = "Vulnerability Counts by Selected Severities:\n"
+    for severity, count in severity_counts.items():
+        result += f" - {severity}: {count}\n"
 
-def get_remediations(llm, cves, dockerfile):
-    remediation_instructions = """I want you to act as an expert on docker and how to remediate vulnerabilities. 
-        Given the following CVEs, I want you to suggest changes to the provided Dockerfile to remediate or fix the CVEs.  
-        Look for any other recommendations to improve the security posture of the docker image.   
-        Use markdown to highlight any changes. 
-        CVEs: {cves}
-        DOCKERFILE:
-           {dockerfile}
-           """
+    result += "\nFixable Vulnerability Counts by Selected Severities:\n"
+    for severity, count in fixable_counts.items():
+        result += f" - {severity}: {count}\n"
 
-    input_variables = ["cves", "dockerfile"]
+    # Adding fixable vulnerabilities details
+    result += "\nDetails of Fixable Vulnerabilities by Selected Severities:\n"
+    for _, row in fixable_vulns.iterrows():
+        cve_ids = [identifier['value'] for identifier in row['identifiers'] if identifier['type'].lower() == 'cve']
+        cve_ids_str = ", ".join(cve_ids) if cve_ids else "No CVE ID"
+        result += f"Severity: {row['severity']}, CVE IDs: {cve_ids_str}, Solution: {row['solution']}\n"
 
-    prompt_template = PromptTemplate(
-        input_variables=input_variables, template=remediation_instructions)
-    rem_chain = LLMChain(llm=llm, prompt=prompt_template,
-                         output_key="remediations")
-    remediations = rem_chain.run({'cves': cves, 'dockerfile': dockerfile})
-    return remediations
-
+    return result
 
 # Function to analyze CVEs using LangChain and OpenAI
-def analyze_cves_with_openai(ai_instructions, cves, table, openai_api_key, dockerfile):
-    cves_string = ','.join(cves)
-    remediations = ""
+def analyze_cves_with_openai(ai_instructions, data, openai_api_key, dockerfile):
     # return cves_string
     with get_openai_callback() as cb:
         llm = ChatOpenAI(model_name=model, temperature=0.0,
                          openai_api_key=openai_api_key)
-        input_variables = ["cves", "table"]
+        input_variables = ["data"]
         prompt_template = PromptTemplate(
             input_variables=input_variables, template=ai_instructions)
         review_chain = LLMChain(
             llm=llm, prompt=prompt_template, output_key="feedback")
-        feedback = review_chain.run({'cves': cves_string, 'table': table})
+        feedback = review_chain.run({'data': data, 'dockerfile':dockerfile})
         print(cb)
-        # print (cves_string)
 
-        if dockerfile:
-            remediations = get_remediations(llm, cves_string, dockerfile)
-
-    return f"""
-        {feedback}
-       
-        {remediations}
-        """
-
+    return feedback
 
 if __name__ == '__main__':
+    ai_instructions = """Act as an expert on Information Assurance and docker containers vulnerabilities.  
+    Analyze the data below from a container vulnerability scan. This file contains data on various vulnerabilities found in a container. Please do the following:
+Categorize all vulnerabilities by their severity (Critical, High, Medium, Low).
+Provide a count for the total number of vulnerabilities in each severity category.
+Identify which vulnerabilities have solutions or remediations provided.
+For those with solutions, count how many there are in each severity category.
+Provide details on what is needed to fix or remediate these vulnerabilities, including package upgrades or specific actions recommended.
+Please format your response with clear headings for each task and present the data in an easy-to-understand manner. If a dockerfile is provided, I want you to 
+analyze this dockerfile based on these CVEs and other security best practices and provide recommendations of fixes to improve the security posture of the image.  
+Include details instructions an updated dockerfile that shows the changes you recommend.  You can use markup to highlight the changes to the dockerfile.
 
-    ai_instructions = """
-    
-    Act as an expert on Information Assurance and docker containers vulnerabilities.  
+    DATA: 
+    {data}    
 
-    Provide a summary feedback for the following CVEs: {cves}. Return output using markdown and provide links if possible. 
-    You can use the following table to help with providing details about where to get more info and recommended fixes: {table}. 
-  
-Here is a sample output that I want you to use as a template for all responses.  Do not deviate from this format:
-
-Source	Severity	CVE	Details Link	Solution
-your_custom_image	High	CVE-2018-0732	Details	Upgrade to a non-vulnerable version of OpenSSL.
-Summary Feedback:
-
-The detected vulnerability is CVE-2018-0732, which has a high severity. This vulnerability affects your_custom_image.
-
-For more details about this vulnerability, you can refer to the Details Link.
-
-The recommended solution to address this vulnerability is to upgrade to a non-vulnerable version of OpenSSL.
-
-Detected Issue Counts by Severity:
-
-Based on the provided information, there is only one detected vulnerability with a severity level of High. No critical findings were mentioned.
-
-Recommendation:
-
-Considering the presence of a high-severity vulnerability, it is recommended to address and fix this vulnerability before approving the system for production use.
-    
+    DOCKERFILE:
+    {dockerfile}
     """
 
     st.set_page_config(page_title="Vulnerability Scanner Reviewer")
@@ -152,39 +117,18 @@ Considering the presence of a high-severity vulnerability, it is recommended to 
     with tab2:
         dockerfile = st.text_area("Dockerfile", "", height=500)
 
+    selected_severities_checked = {level for level, checked in selected_severities.items() if checked}
+
     if st.button("Submit"):
         if uploaded_file is not None and openai_api_key:
             data = json.load(uploaded_file)
-            active_severities = [
-                level for level, checked in selected_severities.items() if checked]
-            vulnerabilities_data, cves_to_analyze = prepare_vulnerability_data(
-                data['vulnerabilities'], active_severities)
-
-            # Display the table
-            df = pd.DataFrame(vulnerabilities_data)
-            # st.table(df)
-
-            # Analyze CVEs using OpenAI
-            if cves_to_analyze:
-                with st.spinner('Working on it...'):
-                    analysis_result = analyze_cves_with_openai(
-                        ai_review_instructions, cves_to_analyze, df, openai_api_key, dockerfile.strip())
-                    st.write("Risk and Fixes Analysis:")
-                    st.markdown(analysis_result)
-                    # if dockerfile.strip():  # Checks if dockerfile is not just empty or whitespace
-                    #     with st.spinner('Looking for Remediations...'):
-                    #         # Logic to handle Dockerfile
-                    #         st.write('Dockerfile is present. Here is the content:')
-                    #         st.text(dockerfile)
-            else:
-                active_severities_string = ", ".join(
-                    level for level, checked in selected_severities.items() if checked)
-                if active_severities_string:
-                    st.write(
-                        f"This scan appears to not have any valid open findings for selected severities: {active_severities_string}.")
-                else:
-                    st.write(
-                        "This scan appears to not have any valid open findings.")
+            included_fixes = extract_data(data, selected_severities_checked )
+            #st.markdown(included_fixes)
+            with st.spinner('Working on it...'):
+                analysis_result = analyze_cves_with_openai(
+                    ai_review_instructions, included_fixes, openai_api_key, dockerfile.strip())
+                st.write("Risk and Fixes Analysis:")
+                st.markdown(analysis_result)
         else:
             st.warning(
                 "Please upload a JSON file and enter OpenAI API key to proceed.")
