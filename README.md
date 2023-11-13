@@ -19,7 +19,7 @@ This does not replace the need for an expert review of the scan.  While the plan
 - [Streamlit Documentation](https://docs.streamlit.io)
 - [OpenAI API Documentation](https://beta.openai.com/docs/)
 - [LangChain API Documentation](https://python.langchain.com/docs/get_started/introduction)
-- [Source Code]([https://github.com/empowerment-ai/code-assignment-checker](https://github.com/empowerment-ai/vul-scan-reviewer))
+- [Source Code](https://github.com/empowerment-ai/vul-scan-reviewer)
 
 Feel free to explore the code and contribute to the project. Your feedback and contributions are most welcome!
 
